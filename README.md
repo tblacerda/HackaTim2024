@@ -1,4 +1,5 @@
-# Este documento apresenta um detalhamento técnico da nossa solução que envolve a junção de várias bases de dados, a aplicação de métodos matemáticos avançados e a implementação de um sistema de recomendação. A solução é projetada para otimizar a alocação de Ordens de Compra (OCs) no ambiente dinâmico e multivariável que é a implantação de rede de acesso.
+# HackaTIM 2024. DanTIMzig
+Este documento apresenta um detalhamento técnico da nossa solução que envolve a junção de várias bases de dados, a aplicação de métodos matemáticos avançados e a implementação de um sistema de recomendação. A solução é projetada para otimizar a alocação de Ordens de Compra (OCs) no ambiente dinâmico e multivariável que é a implantação de rede de acesso.
 
 A solução começa com a junção de várias bases de dados, cada uma contendo informações críticas relevantes para o projeto. Em seguida, é aplicado o Método de Análise Multicritério PROMETHEE, uma abordagem matemática que auxilia na tomada de decisões ao avaliar um conjunto de alternativas com base em múltiplos critérios. Este método produz um ranking de OCs, que é então ajustado usando a técnica de Programação Linear para levar em conta várias restrições de negócio.
 
