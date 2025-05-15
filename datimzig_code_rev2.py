@@ -8,6 +8,10 @@ from pymcdm.helpers import rrankdata
 from ortools.linear_solver import pywraplp
 from geographiclib.geodesic import Geodesic
 import tratamentoMOC
+import os
+current_path = os.getcwd()
+print(f"Current working directory: {current_path}")
+os.chdir(r'C:\Users\F8058552\OneDrive - TIM\__Automacao_de_tarefas\HACK@TIM_2024\__ENTREGAVEIS_GRUPO_XX_DANTIMZIG__\PYTHON')
 
 # Configuring logging for the application
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +25,7 @@ class RecommendationConfig:
     def __init__(self,
         num_max_ranking=10, weight_distance=0.1,
         q_recommendation=10, p_recommendation=30, recommendation_ratio=0.4,
-        vendor_constraint=0.1, uf_constraint=0.03):
+        vendor_constraint=0.1, uf_constraint=0.03, regional_constraint=0.1):
         # Initializing configuration parameters
         self.num_max_ranking = num_max_ranking
         self._num_recommendations = max(1, int(np.ceil(num_max_ranking * recommendation_ratio)))
@@ -30,12 +34,13 @@ class RecommendationConfig:
         self.p_recommendation = p_recommendation
         self.vendor_constraint = vendor_constraint
         self.uf_constraint = uf_constraint
+        self.regional_constraint = regional_constraint
 
 # Function to validate the structure of a DataFrame
 def validate_dataframe(df: pd.DataFrame,
                        is_recommendation: bool) -> bool:
     # Defining required columns based on the context
-    required_columns = ['lat', 'long', 'vendor', 'UF'] if is_recommendation else ['ranking']
+    required_columns = ['lat', 'long', 'vendor', 'UF', 'regional'] if is_recommendation else ['ranking']
     try:
         # Performing checks on the DataFrame structure
         checks = [df.iloc[i, 0] == val for i, val in enumerate(['peso', 'tipo', 'q', 'p'])]
@@ -149,7 +154,7 @@ def promethee_recommendation(df: pd.DataFrame,
         # Extracting weights, types, q, and p parameters from the DataFrame
         weights, types, q, p = (df.iloc[i, 1:-5].astype(float).values for i in range(4))
         # Extracting the data for PROMETHEE
-        data = df.iloc[4:, 1:-5].astype(float).values
+        data = df.iloc[4:, 1:-6].astype(float).values
         if data.shape[0] < config.num_max_ranking + config._num_recommendations:
             config.num_max_ranking = data.shape[0] 
             config._num_recommendations = 0
@@ -166,7 +171,8 @@ def promethee_recommendation(df: pd.DataFrame,
                                      'lat',
                                      'long',
                                      'vendor',
-                                     'UF']].sort_values('ranking').reset_index(drop=True) 
+                                     'UF',
+                                     'regional']].sort_values('ranking').reset_index(drop=True) 
         # Initializing the solver
         solver = pywraplp.Solver.CreateSolver('SCIP')
         # Creating variables for the solver
@@ -184,6 +190,12 @@ def promethee_recommendation(df: pd.DataFrame,
                                  processed_df,
                                  'vendor',
                                  max(1, round(config.num_max_ranking * config.vendor_constraint)))
+
+        setup_solver_constraints(solver,
+                            variables,
+                            processed_df,
+                            'regional',
+                            max(1, round(config.num_max_ranking * config.regional_constraint)))
         
         # Defining the objective function for the solver
         solver.Minimize(sum(v * r for v, r in zip(variables, processed_df['ranking'])))
@@ -197,6 +209,10 @@ def promethee_recommendation(df: pd.DataFrame,
         elif result_status == pywraplp.Solver.FEASIBLE:
             criterio = 0.5
             logging.warning("Optimal solution not found, using best feasible solution.")
+        elif result_status == pywraplp.Solver.ABNORMAL or pywraplp.Solver.INFEASIBLE:
+            # If the problem is infeasible, set a different criterion
+            logging.warning("Infeasible solution found, relaxing constraints to obtain best possible solution.")
+            return "Solução não encontrada. Relaxe as restrições e tente novamente.", "Sem Recomendações"
         else:
             criterio = 0.1
             logging.warning("No feasible solution found, relaxing constraints to obtain best possible solution.")
@@ -209,7 +225,11 @@ def promethee_recommendation(df: pd.DataFrame,
         # Splitting the DataFrame into main and other candidates
         main_candidates, other_candidates = processed_df.iloc[selected_indices], processed_df.drop(selected_indices)
         # Generating recommendations
-        recommendations = generate_recommendations(main_candidates, other_candidates, config)
+        if other_candidates.shape[0] == 0:
+            logging.warning("No candidates available for recommendations.")
+            return main_candidates, pd.DataFrame()
+        else:
+            recommendations = generate_recommendations(main_candidates, other_candidates, config)
         # Returning the main candidates and recommendations
         try:
             return main_candidates, recommendations.nsmallest(int(config._num_recommendations), 'rankingGlobal')
@@ -226,14 +246,14 @@ if __name__ == "__main__":
     try:
         # Initializing the configuration
         config = RecommendationConfig(
-        num_max_ranking=10, weight_distance=0.1,
-        q_recommendation=10, p_recommendation=30, recommendation_ratio=0.2,
-        vendor_constraint=0.1, uf_constraint=0.1
+        num_max_ranking = 10, weight_distance = 0.1,
+        q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 0.6,
+        vendor_constraint = 0.1, uf_constraint = 0.1, regional_constraint = 0.4
         )
         # Reading the input DataFrame from an Excel file
-        input_df1 = pd.read_excel('PRIORIZAR.xlsx')
+       # input_df1 = pd.read_excel('PRIORIZAR.xlsx')
         input_df2 = tratamentoMOC.carregar_dados()
-        input_df = input_df1 # input_df2 
+        input_df = input_df2 # input_df2 
         # Running the recommendation system
         main_ranking, recommendations = promethee_recommendation(input_df, config)
         main_ranking
