@@ -247,5 +247,3 @@ if __name__ == "__main__":
     except Exception as e:
         # Logging errors if the main execution fails
         logging.error(f"Main execution failed: {e}")
-
-
