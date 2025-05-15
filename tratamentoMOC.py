@@ -37,6 +37,7 @@ def carregar_dados():
 
     #####
     df_ECQ = pd.read_excel('MOC/ecq.xlsx')
+    df_ECQ
     df_ECQ = df_ECQ[['CLASSIFICACAO_GSBI', 'ENDERECO_ID', 'ECQ']]
     df_ECQ.rename(columns={'CLASSIFICACAO_GSBI': 'GSBI'}, inplace=True)
     df_ECQ['GSBI'] = df_ECQ['GSBI'].apply(lambda x: 0 if x == 'Iron' else (1 if x == 'Bronze' else (2 if x == 'Silver' else (3 if x == 'Gold' else x))))
@@ -83,3 +84,39 @@ def carregar_dados():
     df_consolidado['ranking'] = np.nan
 
     return df_consolidado
+
+
+
+import pandas as pd
+import numpy as np
+import oracledb
+d = r"C:\raiz_tiago\oracledb\instantclient_23_6"
+oracledb.init_oracle_client(lib_dir=d)
+import paramiko
+
+
+def fetch_data_from_oracle(DIAS=60):
+    DIAS = 50 
+
+    dsn_tns = oracledb.makedsn('10.192.26.203', '1522', service_name='NTWNEGAN')
+    
+    connection = oracledb.connect(user='USER_NTWDEV', password='USER_NTWDEV@001', dsn=dsn_tns)
+    query = """
+    SELECT
+        ENDERECO_ID, AVG(ECQ) as ECQ, CLASSIFICACAO_GSBI as GSBI
+    FROM NTW_MABI.tb_ecq_agreg
+    WHERE  DIA >= SYSDATE - 60 AND
+        DIA < SYSDATE
+    GROUP BY ENDERECO_ID
+    """
+
+    query_teste = """
+    SELECT * FROM NTW_MABI.tb_ecq_agreg FETCH FIRST 5 ROWS ONLY
+    """
+
+    df = pd.read_sql_query(query_teste, connection)
+    df.columns
+
+    connection.close()
+    return df
+
