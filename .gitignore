@@ -89,3 +89,5 @@ Thumbs.db
 *.bak
 *.swp
 *.swo
+
+MOC/*.dsv

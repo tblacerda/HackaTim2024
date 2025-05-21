@@ -146,6 +146,7 @@ def generate_recommendations(main_df: pd.DataFrame,
 # Main function to execute the recommendation system
 def promethee_recommendation(df: pd.DataFrame,
                              config: RecommendationConfig) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    
     # Validating the input DataFrame
     if not validate_dataframe(df, is_recommendation=True):
         raise ValueError("Invalid dataframe structure")
@@ -173,6 +174,8 @@ def promethee_recommendation(df: pd.DataFrame,
                                      'vendor',
                                      'UF',
                                      'regional']].sort_values('ranking').reset_index(drop=True) 
+        
+        ranking_completo = processed_df[['OC', 'ranking']].copy(deep = True)
         # Initializing the solver
         solver = pywraplp.Solver.CreateSolver('SCIP')
         # Creating variables for the solver
@@ -212,13 +215,13 @@ def promethee_recommendation(df: pd.DataFrame,
         elif result_status == pywraplp.Solver.ABNORMAL or pywraplp.Solver.INFEASIBLE:
             # If the problem is infeasible, set a different criterion
             logging.warning("Infeasible solution found, relaxing constraints to obtain best possible solution.")
-            return "Solução não encontrada. Relaxe as restrições e tente novamente.", "Sem Recomendações"
+            return "Solução não encontrada. Relaxe as restrições e tente novamente.", "Sem Recomendações", ranking_completo
         else:
             criterio = 0.1
             logging.warning("No feasible solution found, relaxing constraints to obtain best possible solution.")
             selected_indices = [i for i, var in enumerate(variables) if var.solution_value() > criterio]
             main_candidates, other_candidates = processed_df.iloc[selected_indices], processed_df.drop(selected_indices)
-            return main_candidates            
+            return main_candidates, pd.DataFrame(), ranking_completo         
         
         # Extracting the selected indices from the solver solution
         selected_indices = [i for i, var in enumerate(variables) if var.solution_value() == criterio]
@@ -227,19 +230,75 @@ def promethee_recommendation(df: pd.DataFrame,
         # Generating recommendations
         if other_candidates.shape[0] == 0:
             logging.warning("No candidates available for recommendations.")
-            return main_candidates, pd.DataFrame()
+            return main_candidates, pd.DataFrame(), ranking_completo
         else:
             recommendations = generate_recommendations(main_candidates, other_candidates, config)
         # Returning the main candidates and recommendations
         try:
-            return main_candidates, recommendations.nsmallest(int(config._num_recommendations), 'rankingGlobal')
+            return main_candidates, recommendations.nsmallest(int(config._num_recommendations), 'rankingGlobal'), ranking_completo
         except Exception as e:
             logging.error(f"Error while getting recommendations: {e}")
-            return main_candidates, pd.DataFrame()
+            return main_candidates, pd.DataFrame(), ranking_completo
     except Exception as e:
         # Logging errors if the recommendation system fails
         logging.error(f"Recommendation system failed: {e}")
         raise
+
+def DanTIMzig_recommendation(df: pd.DataFrame,
+                             config: RecommendationConfig) -> pd.DataFrame:
+    ''' Apenas um Wrapper para a função promethee_recommendation
+        a promethee_recommendation retorna os df Principal e Recomendação
+        Esse metodo ajusta a saida para ser igual a entrada + as colunas 
+        * 'ranking" que no input é vazia, retorna com o ranking preenchido de 1 a N,
+        preenchendo completamente todas as OCs que foram enviadas.
+        * 'Tipo' recebe tres valores 'Principal', 'Recomendada' ou 'Fora Rank'
+        * 'OC Principal' para as OCs Tipo = Recomendada, essa coluna seria vazia tem o valor da OC
+        que a recomendou
+        * Distancia, para as OCs Tipo = recomendada, essa coluna tem a distancia em Km para a 
+        OC Principal  
+    '''
+
+    # Preprocessing the input DataFrame
+    try:
+        main_ranking, recommendations, ranking_completo = promethee_recommendation(input_df, config)
+        # Running the optimization model
+       
+        ranking_map_completo = ranking_completo.set_index('OC')['ranking'].to_dict()
+        output_df = input_df.copy(deep = True)
+        output_df = output_df.iloc[4:].reset_index(drop=True)
+        ranking_map = main_ranking.set_index('OC')['ranking'].to_dict()
+
+        output_df['ranking'] = output_df['OC'].map(ranking_map)
+        output_df.loc[output_df['ranking'].notna(), 'tipo'] = 'Principal'
+        
+        OCRecomendada_map = recommendations.set_index('OCRecomendada')['OCPrincipal'].to_dict()
+        output_df['OCPrincipal'] = output_df['OC'].map(OCRecomendada_map)
+        output_df.loc[output_df['OCPrincipal'].notna(), 'tipo'] = 'Recomendada'
+        output_df['tipo'] = output_df['tipo'].fillna('Fora Rank')
+
+        distancia_map = recommendations.set_index('OCRecomendada')['distancia'].to_dict()
+        output_df['distancia'] = output_df['OC'].map(distancia_map)
+
+        output_df['ranking'] = output_df['OC'].map(ranking_map_completo)
+
+        output_df = output_df[['OC', 'COMERCIAL', 'CORPORATIVO', 'DEMANDA SAZONAL',
+                                'NPS', 'OBRIGAÇÃO', 'CAPACIDADE', 'ECQ', 'GSBI', 
+                                'RISCO TX', 'RFW', 'DETENTOR', 'TIPO INFRA',
+                                'URGÊNCIA', 'ranking', 'lat', 'long',
+                                'vendor', 'UF','regional', 'tipo', 'OCPrincipal','distancia']]
+        
+        output_df.columns = ['OC', 'COMERCIAL', 'CORPORATIVO', 'DEMANDA SAZONAL',
+                            'NPS', 'OBRIGACAO', 'CAPACIDADE', 'ECQ', 'GSBI', 
+                            'RISCO_TX', 'RISCO_RFW', 'RISCO_DETENTOR', 'RISCO_INFRA',
+                            'URGENCIA', 'ranking', 'lat', 'long',
+                            'VENDOR', 'UF','REGIONAL', 'Tipo', 'OCPrincipal','distancia']
+
+        return output_df
+    
+    except Exception as e:
+        logging.error(f"Error while processing DataFrame: {e}")
+
+
 
 # Main execution block
 if __name__ == "__main__":
@@ -247,19 +306,17 @@ if __name__ == "__main__":
         # Initializing the configuration
         config = RecommendationConfig(
         num_max_ranking = 10, weight_distance = 0.1,
-        q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 0.6,
-        vendor_constraint = 0.1, uf_constraint = 0.1, regional_constraint = 0.4
+        q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 1,
+        vendor_constraint = 0.1, uf_constraint = 0.01, regional_constraint = 0.01
         )
         # Reading the input DataFrame from an Excel file
-       # input_df1 = pd.read_excel('PRIORIZAR.xlsx')
-        input_df2 = tratamentoMOC.carregar_dados()
-        input_df = input_df2 # input_df2 
+        input_df1 = pd.read_excel('PRIORIZAR.xlsx')
+        #input_df2 = tratamentoMOC.carregar_dados()
+        input_df = input_df1 # input_df2
         # Running the recommendation system
-        main_ranking, recommendations = promethee_recommendation(input_df, config)
-        main_ranking
-        recommendations
-        main_ranking.to_excel('RankingPrincipal.xlsx', index=False)
-        recommendations.to_excel('RankingRecomendacao.xlsx', index=False)
+        output = DanTIMzig_recommendation(input_df, config)
+        output
+        output.to_excel('Ranking.xlsx', index=False)
         # Logging success message
         logging.info("Analysis completed successfully")
         logging.info("Results saved to 'RankingPrincipal.xlsx' and 'RankingRecomendacao.xlsx'")
@@ -267,3 +324,5 @@ if __name__ == "__main__":
     except Exception as e:
         # Logging errors if the main execution fails
         logging.error(f"Main execution failed: {e}")
+
+
