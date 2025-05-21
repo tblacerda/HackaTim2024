@@ -315,11 +315,10 @@ if __name__ == "__main__":
         input_df = input_df1 # input_df2
         # Running the recommendation system
         output = DanTIMzig_recommendation(input_df, config)
-        output
         output.to_excel('Ranking.xlsx', index=False)
         # Logging success message
         logging.info("Analysis completed successfully")
-        logging.info("Results saved to 'RankingPrincipal.xlsx' and 'RankingRecomendacao.xlsx'")
+        logging.info("Results saved'")
 
     except Exception as e:
         # Logging errors if the main execution fails
