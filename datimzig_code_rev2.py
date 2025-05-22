@@ -270,28 +270,24 @@ def DanTIMzig_recommendation(df: pd.DataFrame,
 
         output_df['ranking'] = output_df['OC'].map(ranking_map)
         output_df.loc[output_df['ranking'].notna(), 'tipo'] = 'Principal'
-        
-        OCRecomendada_map = recommendations.set_index('OCRecomendada')['OCPrincipal'].to_dict()
-        output_df['OCPrincipal'] = output_df['OC'].map(OCRecomendada_map)
-        output_df.loc[output_df['OCPrincipal'].notna(), 'tipo'] = 'Recomendada'
+        if recommendations is not None and not recommendations.empty:
+            OCRecomendada_map = recommendations.set_index('OCRecomendada')['OCPrincipal'].to_dict()
+            output_df['OCPrincipal'] = output_df['OC'].map(OCRecomendada_map)
+            output_df.loc[output_df['OCPrincipal'].notna(), 'tipo'] = 'Recomendada'
+            distancia_map = recommendations.set_index('OCRecomendada')['distancia'].to_dict()
+            output_df['distancia'] = output_df['OC'].map(distancia_map)
+        else:
+            output_df['OCPrincipal'] = None
+            output_df['distancia'] = None
+
         output_df['tipo'] = output_df['tipo'].fillna('Fora Rank')
-
-        distancia_map = recommendations.set_index('OCRecomendada')['distancia'].to_dict()
-        output_df['distancia'] = output_df['OC'].map(distancia_map)
-
         output_df['ranking'] = output_df['OC'].map(ranking_map_completo)
-
-        output_df = output_df[['OC', 'COMERCIAL', 'CORPORATIVO', 'DEMANDA SAZONAL',
-                                'NPS', 'OBRIGAÇÃO', 'CAPACIDADE', 'ECQ', 'GSBI', 
-                                'RISCO TX', 'RFW', 'DETENTOR', 'TIPO INFRA',
-                                'URGÊNCIA', 'ranking', 'lat', 'long',
-                                'vendor', 'UF','regional', 'tipo', 'OCPrincipal','distancia']]
         
         output_df.columns = ['OC', 'COMERCIAL', 'CORPORATIVO', 'DEMANDA SAZONAL',
-                            'NPS', 'OBRIGACAO', 'CAPACIDADE', 'ECQ', 'GSBI', 
-                            'RISCO_TX', 'RISCO_RFW', 'RISCO_DETENTOR', 'RISCO_INFRA',
-                            'URGENCIA', 'ranking', 'lat', 'long',
-                            'VENDOR', 'UF','REGIONAL', 'Tipo', 'OCPrincipal','distancia']
+                    'NPS', 'OBRIGACAO', 'CAPACIDADE', 'ECQ', 'GSBI', 
+                    'RISCO_TX', 'RISCO_RFW', 'RISCO_DETENTOR', 'RISCO_INFRA',
+                    'URGENCIA', 'ranking', 'lat', 'long',
+                    'VENDOR', 'UF','REGIONAL', 'Tipo', 'OCPrincipal','distancia']
 
         return output_df
     
@@ -306,15 +302,17 @@ if __name__ == "__main__":
         # Initializing the configuration
         config = RecommendationConfig(
         num_max_ranking = 10, weight_distance = 0.1,
-        q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 1,
+        q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 0.1,
         vendor_constraint = 0.1, uf_constraint = 0.01, regional_constraint = 0.01
         )
         # Reading the input DataFrame from an Excel file
-        input_df1 = pd.read_excel('PRIORIZAR.xlsx')
-        #input_df2 = tratamentoMOC.carregar_dados()
-        input_df = input_df1 # input_df2
+        #input_df1 = pd.read_excel('PRIORIZAR.xlsx')
+        input_df2 = tratamentoMOC.carregar_dados()
+        input_df = input_df2 # input_df2
         # Running the recommendation system
+        input_df
         output = DanTIMzig_recommendation(input_df, config)
+        output
         output.to_excel('Ranking.xlsx', index=False)
         # Logging success message
         logging.info("Analysis completed successfully")
@@ -323,5 +321,4 @@ if __name__ == "__main__":
     except Exception as e:
         # Logging errors if the main execution fails
         logging.error(f"Main execution failed: {e}")
-
 
