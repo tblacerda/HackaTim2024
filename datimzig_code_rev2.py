@@ -9,6 +9,7 @@ from ortools.linear_solver import pywraplp
 from geographiclib.geodesic import Geodesic
 import tratamentoMOC
 import os
+
 current_path = os.getcwd()
 print(f"Current working directory: {current_path}")
 os.chdir(r'C:\Users\F8058552\OneDrive - TIM\__Automacao_de_tarefas\HACK@TIM_2024\__ENTREGAVEIS_GRUPO_XX_DANTIMZIG__\PYTHON')
@@ -28,7 +29,7 @@ class RecommendationConfig:
         vendor_constraint=0.1, uf_constraint=0.03, regional_constraint=0.1):
         # Initializing configuration parameters
         self.num_max_ranking = num_max_ranking
-        self._num_recommendations = max(1, int(np.ceil(num_max_ranking * recommendation_ratio)))
+        self._num_recommendations = max(0, int(np.ceil(num_max_ranking * recommendation_ratio)))
         self.weight_distance = weight_distance
         self.q_recommendation = q_recommendation
         self.p_recommendation = p_recommendation
@@ -186,19 +187,19 @@ def promethee_recommendation(df: pd.DataFrame,
                                  variables,
                                  processed_df,
                                  'UF',
-                                 max(1, round(config.num_max_ranking * config.uf_constraint)))
+                                 max(0, round(config.num_max_ranking * config.uf_constraint)))
         
         setup_solver_constraints(solver,
                                  variables,
                                  processed_df,
                                  'vendor',
-                                 max(1, round(config.num_max_ranking * config.vendor_constraint)))
+                                 max(0, round(config.num_max_ranking * config.vendor_constraint)))
 
         setup_solver_constraints(solver,
                             variables,
                             processed_df,
                             'regional',
-                            max(1, round(config.num_max_ranking * config.regional_constraint)))
+                            max(0, round(config.num_max_ranking * config.regional_constraint)))
         
         # Defining the objective function for the solver
         solver.Minimize(sum(v * r for v, r in zip(variables, processed_df['ranking'])))
@@ -301,18 +302,21 @@ if __name__ == "__main__":
     try:
         # Initializing the configuration
         config = RecommendationConfig(
-        num_max_ranking = 10, weight_distance = 0.1,
+        num_max_ranking = 100, weight_distance = 0.1,
         q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 0.1,
-        vendor_constraint = 0.1, uf_constraint = 0.01, regional_constraint = 0.01
+        vendor_constraint = 0.00, uf_constraint = 0.00, regional_constraint = 0.00
         )
+
+  
         # Reading the input DataFrame from an Excel file
         #input_df1 = pd.read_excel('PRIORIZAR.xlsx')
-        input_df2 = tratamentoMOC.carregar_dados()
+        input_df2 = tratamentoMOC.carregar_dados2()
         input_df = input_df2 # input_df2
+        input_df2.to_excel('input_df.xlsx', index=False)
+        input_df.shape
         # Running the recommendation system
-        input_df
         output = DanTIMzig_recommendation(input_df, config)
-        output
+        output['Tipo'].value_counts()
         output.to_excel('Ranking.xlsx', index=False)
         # Logging success message
         logging.info("Analysis completed successfully")
