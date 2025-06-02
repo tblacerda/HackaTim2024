@@ -9,6 +9,8 @@ from ortools.linear_solver import pywraplp
 from geographiclib.geodesic import Geodesic
 import tratamentoMOC
 import os
+import warnings
+import time
 
 current_path = os.getcwd()
 print(f"Current working directory: {current_path}")
@@ -73,10 +75,12 @@ def run_promethee(data: np.ndarray,
                   q: np.ndarray, 
                   p: np.ndarray) -> np.ndarray:
     try:
-        # Initializing the PROMETHEE II method
-        promethee = PROMETHEE_II('vshape_2')
-        # Returning the ranked data
-        return rrankdata(promethee(data, weights, types, q=q, p=p))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            # Initializing the PROMETHEE II method
+            promethee = PROMETHEE_II('vshape_2')
+            # Returning the ranked data
+            return rrankdata(promethee(data, weights, types, q=q, p=p))
     except Exception as e:
         # Logging errors if PROMETHEE calculation fails
         logging.error(f"PROMETHEE calculation failed: {e}")
@@ -127,14 +131,16 @@ def generate_recommendations(main_df: pd.DataFrame,
             # Assigning local rankings to the candidates
             vendor_candidates['rankingLocal'] = rankings
             # Selecting the top candidates based on local ranking
-            top_candidates = vendor_candidates.nsmallest(config._num_recommendations, 'rankingLocal')
-            
+        
+           
+            #top_candidates = vendor_candidates.nsmallest(3, 'rankingLocal')
+            #top_candidates = vendor_candidates.copy(deep=True)
             # Appending the recommendations
             recommendations.append({
-                'OCRecomendada': top_candidates['OC'].values[0],
-                'rankingGlobal': top_candidates['ranking'].values[0],
-                'distancia': top_candidates['distancia'].values[0],
-                'rankingLocal': top_candidates['rankingLocal'].values[0],
+                'OCRecomendada': vendor_candidates['OC'].values[0],
+                'rankingGlobal': vendor_candidates['ranking'].values[0],
+                'distancia': vendor_candidates['distancia'].values[0],
+                'rankingLocal': vendor_candidates['rankingLocal'].values[0],
                 'OCPrincipal': main_row['OC']
             })
         # Returning the recommendations as a DataFrame
@@ -142,12 +148,44 @@ def generate_recommendations(main_df: pd.DataFrame,
             # Logging errors if recommendation generation fails
             logging.error(f"Recommendation generation failed: {e}")
             continue
-    return pd.DataFrame(recommendations)
+        
+    FinalRanking = pd.DataFrame(recommendations)
+    rankings = run_promethee(FinalRanking[['rankingGlobal', 'distancia']].values,
+                                np.array([weight_ranking, config.weight_distance]),
+                                np.array([-1, -1]),
+                                np.array([0, config.q_recommendation]),
+                                np.array([0, config.p_recommendation]))   
+    FinalRanking['rankingRecomendacao'] = rankings
+    # 1. Para cada valor em “OCRecomendada”, identificamos o índice da linha com a menor ‘distancia’:
+    idx_menor_dist = FinalRanking.groupby("OCRecomendada")["distancia"].idxmin()
+    # 2. Selecionamos essas linhas do DataFrame original e, se quiser, reindexamos:
+    FinalRanking = FinalRanking.loc[idx_menor_dist].reset_index(drop=True)
+    FinalRanking = FinalRanking.nsmallest(config._num_recommendations, 'rankingRecomendacao')
+    FinalRanking = FinalRanking[['OCRecomendada', 'rankingGlobal', 'distancia', 'rankingLocal', 'OCPrincipal']]        
+    return FinalRanking
 
 # Main function to execute the recommendation system
 def promethee_recommendation(df: pd.DataFrame,
                              config: RecommendationConfig) -> Tuple[pd.DataFrame, pd.DataFrame]:
     
+    '''
+    Função principal para executar o sistema de recomendação.
+    '''
+    def setup_soft_constraint(solver, variables, df, group_col, max_count, penalty_weight=1000):
+        slacks = []
+        for value in df[group_col].unique():
+            indices = df.index[df[group_col] == value].tolist()
+            group_vars = [variables[i] for i in indices]
+            
+            slack = solver.NumVar(0, solver.infinity(), f'slack_{group_col}_{value}')
+            slacks.append(slack)
+            
+            # original constraint virando soft: soma das variáveis <= max_count + slack
+            solver.Add(solver.Sum(group_vars) <= max_count + slack)
+
+            # adiciona penalidade por cada slack no objetivo
+        return sum(slacks) * penalty_weight
+
     # Validating the input DataFrame
     if not validate_dataframe(df, is_recommendation=True):
         raise ValueError("Invalid dataframe structure")
@@ -157,10 +195,9 @@ def promethee_recommendation(df: pd.DataFrame,
         weights, types, q, p = (df.iloc[i, 1:-5].astype(float).values for i in range(4))
         # Extracting the data for PROMETHEE
         data = df.iloc[4:, 1:-6].astype(float).values
-        if data.shape[0] < config.num_max_ranking + config._num_recommendations:
-            config.num_max_ranking = data.shape[0] 
-            config._num_recommendations = 0
-        
+        if config.num_max_ranking + config._num_recommendations > data.shape[0]:
+            config._num_recommendations = max(0, data.shape[0] - config.num_max_ranking)
+
         if config.num_max_ranking < 1:
             raise ValueError("Number of max rankings must be at least 1.")
 
@@ -180,30 +217,60 @@ def promethee_recommendation(df: pd.DataFrame,
         # Initializing the solver
         solver = pywraplp.Solver.CreateSolver('SCIP')
         # Creating variables for the solver
-        variables = [solver.IntVar(0, 1, f'x_{i}') for i in range(len(processed_df))]
-        ### automatizar 
+        variables = [solver.BoolVar(f'x_{i}') for i in range(len(processed_df))]
+        ### automatizar
         # Setting up constraints for the solver
-        setup_solver_constraints(solver,
-                                 variables,
-                                 processed_df,
-                                 'UF',
-                                 max(0, round(config.num_max_ranking * config.uf_constraint)))
-        
-        setup_solver_constraints(solver,
-                                 variables,
-                                 processed_df,
-                                 'vendor',
-                                 max(0, round(config.num_max_ranking * config.vendor_constraint)))
 
-        setup_solver_constraints(solver,
-                            variables,
-                            processed_df,
-                            'regional',
-                            max(0, round(config.num_max_ranking * config.regional_constraint)))
+        # Defina aqui seus limites originais:
+        max_uf       = max(0, round(config.num_max_ranking * config.uf_constraint))
+        max_vendor   = max(0, round(config.num_max_ranking * config.vendor_constraint))
+        max_regional = max(0, round(config.num_max_ranking * config.regional_constraint))
+
+        # Defina um peso de penalidade para cada tipo (você pode ajustar conforme o trade‐off desejado)
+        P_uf       = 1000
+        P_vendor   = 1000
+        P_regional = 1000
+
+        penalty_uf = setup_soft_constraint(solver,
+                                        variables,
+                                        processed_df,
+                                        'UF',
+                                        max_uf,
+                                        P_uf)
+
+                # Chama para “vendor soft”
+        penalty_vendor = setup_soft_constraint(solver,
+                                            variables,
+                                            processed_df,
+                                            'vendor',
+                                            max_vendor,
+                                            P_vendor)
+                        
+                # Chama para “regional soft”
+        penalty_regional = setup_soft_constraint(solver,
+                                                variables,
+                                                processed_df,
+                                                'regional',
+                                                max_regional,
+                                                P_regional)
+
+
+                # --- 4) Define a função objetivo: ranking + penalidades ---
+        #    (original: minimizar ∑ ranking_i * x_i)
+        obj_terms = []
+        for i in range(len(processed_df)):
+            ranking_i = processed_df.loc[i, 'ranking']
+            obj_terms.append(ranking_i * variables[i])
+
+        # Adiciona ao objetivo os termos de penalidade
+        # (penalty_uf, penalty_vendor e penalty_regional já são somas de penalidades para cada slack)
+        total_obj = solver.Sum(obj_terms) + penalty_uf + penalty_vendor + penalty_regional
+
+        solver.Add(sum(variables) == config.num_max_ranking)
         
         # Defining the objective function for the solver
-        solver.Minimize(sum(v * r for v, r in zip(variables, processed_df['ranking'])))
-        solver.Add(sum(variables) == config.num_max_ranking)
+        solver.Minimize(total_obj)
+        
         
         # Solving the optimization problem
         result_status = solver.Solve()
@@ -211,14 +278,14 @@ def promethee_recommendation(df: pd.DataFrame,
             # If no optimal solution, get best feasible solution
             criterio = 1
         elif result_status == pywraplp.Solver.FEASIBLE:
-            criterio = 0.5
+            criterio = 0.3
             logging.warning("Optimal solution not found, using best feasible solution.")
         elif result_status == pywraplp.Solver.ABNORMAL or pywraplp.Solver.INFEASIBLE:
             # If the problem is infeasible, set a different criterion
             logging.warning("Infeasible solution found, relaxing constraints to obtain best possible solution.")
             return "Solução não encontrada. Relaxe as restrições e tente novamente.", "Sem Recomendações", ranking_completo
         else:
-            criterio = 0.1
+            criterio = 0.05
             logging.warning("No feasible solution found, relaxing constraints to obtain best possible solution.")
             selected_indices = [i for i, var in enumerate(variables) if var.solution_value() > criterio]
             main_candidates, other_candidates = processed_df.iloc[selected_indices], processed_df.drop(selected_indices)
@@ -236,7 +303,8 @@ def promethee_recommendation(df: pd.DataFrame,
             recommendations = generate_recommendations(main_candidates, other_candidates, config)
         # Returning the main candidates and recommendations
         try:
-            return main_candidates, recommendations.nsmallest(int(config._num_recommendations), 'rankingGlobal'), ranking_completo
+            return main_candidates, recommendations, ranking_completo
+            
         except Exception as e:
             logging.error(f"Error while getting recommendations: {e}")
             return main_candidates, pd.DataFrame(), ranking_completo
@@ -263,12 +331,11 @@ def DanTIMzig_recommendation(df: pd.DataFrame,
     try:
         main_ranking, recommendations, ranking_completo = promethee_recommendation(input_df, config)
         # Running the optimization model
-       
+
         ranking_map_completo = ranking_completo.set_index('OC')['ranking'].to_dict()
         output_df = input_df.copy(deep = True)
         output_df = output_df.iloc[4:].reset_index(drop=True)
-        ranking_map = main_ranking.set_index('OC')['ranking'].to_dict()
-
+        ranking_map = main_ranking.set_index('OC')['ranking'].to_dict()    
         output_df['ranking'] = output_df['OC'].map(ranking_map)
         output_df.loc[output_df['ranking'].notna(), 'tipo'] = 'Principal'
         if recommendations is not None and not recommendations.empty:
@@ -283,13 +350,11 @@ def DanTIMzig_recommendation(df: pd.DataFrame,
 
         output_df['tipo'] = output_df['tipo'].fillna('Fora Rank')
         output_df['ranking'] = output_df['OC'].map(ranking_map_completo)
-        
         output_df.columns = ['OC', 'COMERCIAL', 'CORPORATIVO', 'DEMANDA SAZONAL',
                     'NPS', 'OBRIGACAO', 'CAPACIDADE', 'ECQ', 'GSBI', 
                     'RISCO_TX', 'RISCO_RFW', 'RISCO_DETENTOR', 'RISCO_INFRA',
                     'URGENCIA', 'ranking', 'lat', 'long',
                     'VENDOR', 'UF','REGIONAL', 'Tipo', 'OCPrincipal','distancia']
-
         return output_df
     
     except Exception as e:
@@ -302,22 +367,29 @@ if __name__ == "__main__":
     try:
         # Initializing the configuration
         config = RecommendationConfig(
-        num_max_ranking = 100, weight_distance = 0.1,
+        num_max_ranking = 1000, weight_distance = 0.5,
         q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 0.1,
-        vendor_constraint = 0.00, uf_constraint = 0.00, regional_constraint = 0.00
+        vendor_constraint = 0.0, uf_constraint = 0.05, regional_constraint = 0.0
         )
 
-  
         # Reading the input DataFrame from an Excel file
         #input_df1 = pd.read_excel('PRIORIZAR.xlsx')
         input_df2 = tratamentoMOC.carregar_dados2()
         input_df = input_df2 # input_df2
-        input_df2.to_excel('input_df.xlsx', index=False)
-        input_df.shape
+        input_df
         # Running the recommendation system
+        start_time = time.time()
         output = DanTIMzig_recommendation(input_df, config)
+        elapsed_time = time.time() - start_time
+        print(f"Execution time: {elapsed_time:.2f} seconds")
         output['Tipo'].value_counts()
+        output = output.query('Tipo != "Fora Rank"')
+        output['UF'].value_counts()
+        output['VENDOR'].value_counts()
+        output['REGIONAL'].value_counts()
         output.to_excel('Ranking.xlsx', index=False)
+  
+
         # Logging success message
         logging.info("Analysis completed successfully")
         logging.info("Results saved'")
@@ -326,3 +398,6 @@ if __name__ == "__main__":
         # Logging errors if the main execution fails
         logging.error(f"Main execution failed: {e}")
 
+
+    teste = output.query('Tipo != "Fora Rank"')
+    teste['UF'].value_counts()
