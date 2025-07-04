@@ -158,7 +158,7 @@ def carregar_dados2():
                                     'RISCO_TX', 'RISCO_RFW', 'RISCO_DETENTOR', 'RISCO_INFRA',
                                     'URGENCIA','ranking', 'lat', 'long', 'VENDOR', 'UF', 'REGIONAL']]
     df_consolidado['GSBI'] = df_consolidado['GSBI'].fillna(0)
-    df_consolidado = df_consolidado.dropna(how='any')
+    #df_consolidado = df_consolidado.dropna(how='any')
     df_consolidado = pd.concat([
         pd.DataFrame({'OC': ['peso', 'tipo', 'q', 'p']}),df_consolidado], ignore_index=True)
 

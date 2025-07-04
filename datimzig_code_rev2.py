@@ -11,7 +11,7 @@ import tratamentoMOC
 import os
 import warnings
 import time
-
+import math
 current_path = os.getcwd()
 print(f"Current working directory: {current_path}")
 os.chdir(r'C:\Users\F8058552\OneDrive - TIM\__Automacao_de_tarefas\HACK@TIM_2024\__ENTREGAVEIS_GRUPO_XX_DANTIMZIG__\PYTHON')
@@ -21,6 +21,35 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Initializing the Geodesic object for distance calculations
 g = Geodesic.WGS84
+
+
+
+
+def CalculoDistanciaHaversine(lat1, long1, lat2, long2):
+    """
+    Calcula a distância entre dois pontos na Terra especificados por latitude e longitude.
+    Entradas em graus decimais.
+    Retorna a distância em quilômetros.
+    """
+    # Raio médio da Terra em km
+    R = 6371.0
+
+    # Converte graus para radianos
+    lat1_rad = np.radians(lat1)
+    long1_rad = np.radians(long1)
+    lat2_rad = np.radians(lat2)
+    long2_rad = np.radians(long2)
+
+    # Diferenças
+    dlat = lat2_rad - lat1_rad
+    dlon = long2_rad - long1_rad
+
+    # Fórmula de Haversine
+    a = np.sin(dlat/2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon/2)**2
+    c = 2 * np.atan2(np.sqrt(a), np.sqrt(1 - a))
+    distancia = R * c
+
+    return round(distancia,2)
 
 # Class to hold configuration parameters for the recommendation system
 class RecommendationConfig:
@@ -63,6 +92,7 @@ def calculate_distance(lat1: float,
     try:
         # Using the Geodesic library to calculate distance
         return round(g.Inverse(lat1, lon1, lat2, lon2)['s12'] / 1000, 2)
+        #return CalculoDistanciaHaversine(lat1, lon1, lat2, lon2)
     except Exception as e:
         # Logging errors if distance calculation fails
         logging.error(f"Distance calculation failed: {e}")
@@ -115,6 +145,10 @@ def generate_recommendations(main_df: pd.DataFrame,
                 continue
             
             # Calculating distances for the candidates
+            # Filter out vendor_candidates['lat'] that are more than 2 degrees (in absolute value) away from main_row['lat']
+            vendor_candidates = vendor_candidates[np.abs(vendor_candidates['lat'] - main_row['lat']) <= 3]
+            # Filter out vendor_candidates['long'] that are more than 2 degrees (in absolute value) away from main_row['long']
+            vendor_candidates = vendor_candidates[np.abs(vendor_candidates['long'] - main_row['long']) <= 3]
             vendor_candidates['distancia'] = vendor_candidates.apply(lambda x: calculate_distance(main_row['lat'], main_row['long'], x['lat'], x['long']), axis=1)
             vendor_candidates.dropna(subset=['distancia'], inplace=True)
             
@@ -369,26 +403,27 @@ if __name__ == "__main__":
         config = RecommendationConfig(
         num_max_ranking = 1000, weight_distance = 0.5,
         q_recommendation = 10, p_recommendation = 30, recommendation_ratio = 0.1,
-        vendor_constraint = 0.0, uf_constraint = 0.05, regional_constraint = 0.0
+        vendor_constraint = 0.0, uf_constraint = 0.00, regional_constraint = 0.1
         )
 
         # Reading the input DataFrame from an Excel file
         #input_df1 = pd.read_excel('PRIORIZAR.xlsx')
         input_df2 = tratamentoMOC.carregar_dados2()
         input_df = input_df2 # input_df2
-        input_df
+        input_df.to_excel("input.xlsx", index=False)
         # Running the recommendation system
         start_time = time.time()
         output = DanTIMzig_recommendation(input_df, config)
         elapsed_time = time.time() - start_time
         print(f"Execution time: {elapsed_time:.2f} seconds")
         output['Tipo'].value_counts()
-        output = output.query('Tipo != "Fora Rank"')
+        
+        #output = output.query('Tipo != "Fora Rank"')
         output['UF'].value_counts()
         output['VENDOR'].value_counts()
         output['REGIONAL'].value_counts()
         output.to_excel('Ranking.xlsx', index=False)
-  
+
 
         # Logging success message
         logging.info("Analysis completed successfully")
